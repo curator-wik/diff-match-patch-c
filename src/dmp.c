@@ -18,8 +18,12 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <ctype.h>
+#include <stdint.h>
+#include <string.h>
+#include <stdarg.h>
 
 #define dmp_min(A,B)      (((A) < (B)) ? (A) : (B))
+#define dmp_max(A,B)      (((A) > (B)) ? (A) : (B))
 #define dmp_num_cmp(A,B)  (((A) < (B)) ? -1 : ((A) > (B)) ? 1 : 0)
 
 #define START_POOL	8
@@ -594,6 +598,278 @@ void dmp_diff_print_raw(FILE *fp, const dmp_diff *diff)
 	fputs("< \"", fp);
 	print_bytes(fp, diff->t2, diff->l2);
 	fputs("\"\n", fp);
+}
+
+#define PATCH_MARGIN 4
+#define MATCH_MAX_BITS 32
+static int _asnprintf(char **strp, size_t size, const char *fmt, ...)
+{
+	size++;
+	int bytes_written = 0;
+	*strp = calloc(1, size);
+	va_list ap;
+	va_start(ap, fmt);
+	bytes_written = vsnprintf(*strp, size, fmt, ap);
+	va_end(ap);
+	return bytes_written;
+}
+
+// end is inclusinve
+static char *_substring(char *text, int begin, int end)
+{
+	int idx, count = 0;
+	char *substr = malloc(end - begin + 1);
+	for(idx = begin; idx < end; idx++) {
+		substr[count++] = text[idx];
+	}
+	substr[count] = 0;
+	return substr;
+}
+
+static char _get_op(int op)
+{
+	char real_op;
+	if(op < 0) {
+		real_op = '-';
+	} else if(op > 0) {
+		real_op = '+';
+	} else {
+		real_op = '=';
+	}
+	return real_op;
+}
+
+struct dmp_diff_minor {
+	char op;
+	char *text;
+};
+
+static struct dmp_diff_minor *_get_diff_minor(dmp_node *node)
+{
+	struct dmp_diff_minor *dm = calloc(1, sizeof(struct dmp_diff_minor));
+	_asnprintf(&dm->text, node->len, "%s", node->text);
+	dm->op = _get_op(node->op);
+	return dm;
+}
+
+struct dmp_patch {
+	struct dmp_diff_minor **diffs;
+	int64_t start1;
+	int64_t start2;
+	int64_t length1;
+	int64_t length2;
+	int diffs_length;
+};
+
+static int _string_match_count(char *sub_string, char *string)
+{
+	int matches = 0;
+	char *temp;
+	char *temp_sub_string = strdup(sub_string);
+	char *temp_sub_string2 = temp_sub_string;
+	while((temp = strtok(temp_sub_string2, string))) {
+		temp_sub_string2 = NULL;
+		matches++;
+	}
+
+	free(temp_sub_string);
+
+	return matches;
+}
+
+static void _append_diff(struct dmp_patch *patch, struct dmp_diff_minor *dm)
+{
+	if(!patch || !dm) {
+		return;
+	}
+	if(!patch->diffs) {
+		patch->diffs_length = 1;
+		patch->diffs = calloc(1, sizeof(struct dmp_diff_minor *));
+		patch->diffs[0] = dm;
+		return;
+	}
+	patch->diffs_length++;
+	patch->diffs = realloc(patch->diffs, patch->diffs_length);
+	patch->diffs[patch->diffs_length - 1] = dm;
+}
+
+static void _prepend_diff(struct dmp_patch *patch, struct dmp_diff_minor *dm)
+{
+	if(!patch || !dm) {
+		return;
+	}
+	if(!patch->diffs) {
+		patch->diffs_length = 1;
+		patch->diffs = calloc(1, sizeof(struct dmp_diff_minor *));
+		patch->diffs[0] = dm;
+		return;
+	}
+	patch->diffs_length++;
+	patch->diffs = realloc(patch->diffs, patch->diffs_length);
+	int idx;
+	for(idx = patch->diffs_length - 1; idx > 0; idx--) {
+		patch->diffs[idx] = patch->diffs[idx - 1];
+	}
+	patch->diffs[0] = dm;
+}
+
+static void _patch_add_context(struct dmp_patch *patch, char *text)
+{
+	if(!strlen(text)) {
+		return;
+	}
+
+	int padding;
+	char *pattern, *prefix, *suffix;
+
+	pattern = _substring(text, patch->start2, patch->start2 + patch->length1);
+	padding = 0;
+
+	while(_string_match_count(pattern, text) != 1 &&
+	    strlen(pattern) < (2 * PATCH_MARGIN)) {
+		padding += PATCH_MARGIN;
+		free(pattern);
+		pattern = _substring(text, dmp_max(0, patch->start2 - padding),
+		    patch->start2 + patch->length1 + padding);
+	}
+
+	// "add one chunk for good luck"
+	padding += PATCH_MARGIN;
+
+	prefix = _substring(text, dmp_max(0, patch->start2 - padding), patch->start2);
+	if(prefix[0]) {
+		//prepend prefix to diffs
+		struct dmp_diff_minor *dm = calloc(1,
+		    sizeof(struct dmp_diff_minor));
+		dm->op = '=';
+		dm->text = prefix;
+		_prepend_diff(patch, dm);
+	}
+
+	suffix = _substring(text, patch->start2 - padding, patch->start2);
+	if(suffix[0]) {
+		// append suffix to diffs
+		struct dmp_diff_minor *dm = calloc(1,
+		    sizeof(struct dmp_diff_minor));
+		dm->op = '=';
+		dm->text = suffix;
+		_append_diff(patch, dm);
+	}
+
+	// roll back start points
+	patch->start1 -= strlen(prefix);
+	patch->start2 -= strlen(prefix);
+
+	// extend lengths
+	patch->length1 += strlen(prefix) + strlen(suffix);
+	patch->length2 += strlen(prefix) + strlen(suffix);
+
+	free(pattern);
+}
+
+// frees patch_text
+static char *_create_patch_text(char op, int char_count2, char *patch_text,
+    char *diff_text)
+{
+	int size = strlen(patch_text) + 1;
+	char *final_patch_text = NULL;
+	char *temp1, *temp2;
+	temp1 = calloc(1, size);
+	temp2 = calloc(1, size);
+	if(op == '+') {
+		strncpy(temp1, patch_text, char_count2);
+		strncpy(temp2, patch_text + char_count2,
+		    size - 1 - char_count2);
+		asprintf(&final_patch_text, "%s%s%s", temp1, diff_text, temp2);
+	} else if(op == '-') {
+		strncpy(temp1, patch_text, char_count2);
+		strncpy(temp2, patch_text + char_count2 + strlen(diff_text),
+		    size - 1 - char_count2 - strlen(diff_text));
+		asprintf(&final_patch_text, "%s%s", temp1, temp2);
+	}
+
+	free(temp1);
+	free(temp2);
+	free(patch_text);
+	return final_patch_text;
+}
+
+void dmp_diff_print_patch(FILE *fp, const dmp_diff *diff)
+{
+	int pos;
+	const dmp_node *node;
+	char *buf = NULL;
+	//char op;
+	int count = 0;
+	int char_count1 = 0, char_count2 = 0;
+	int num_patches_allocated = 0;
+	struct dmp_patch *patches;
+
+	char *prepatch_text, *postpatch_text;
+	prepatch_text = strdup(diff->t1);
+	postpatch_text = strdup(diff->t1);
+
+	// we'll need no more than one patch per dmp_node, so we'll allocate that much
+	// we probably won't use it all, but this will get freed soon anyway
+	for(pos = diff->list.start; pos >= 0; pos = node->next) {
+		count++;
+		node = dmp_node_at(&diff->pool, pos);
+	}
+	num_patches_allocated = count;
+	patches = calloc(count, sizeof(struct dmp_patch));
+
+	count = 0;
+	for(pos = diff->list.start; pos >= 0; pos = node->next) {
+		node = dmp_node_at(&diff->pool, pos);
+		struct dmp_diff_minor *dm = _get_diff_minor(node);
+		//printf("%c - %s\n", op, buf);
+		if(count == 0 && dm->op != '=') {
+			patches[count].start1 = patches[count].start2 = 0;
+		}
+		if(dm->op == '+') {
+			//patches[count].diffs[patches[count].diffs_length++] = dm;
+			_append_diff(&patches[count], dm);
+			patches[count].length2 += strlen(buf);
+			postpatch_text = _create_patch_text(dm->op, char_count2,
+			    postpatch_text, dm->text);
+		} else if(dm->op == '-') {
+			_append_diff(&patches[count], dm);
+			patches[count].length1 += strlen(buf);
+			postpatch_text = _create_patch_text(dm->op, char_count2,
+			    postpatch_text, dm->text);
+		} else if(dm->op == '=' && strlen(dm->text) <= 2 * PATCH_MARGIN &&
+		    num_patches_allocated > 0 &&
+		    patches[count].diffs_length != count + 1) {
+			_append_diff(&patches[count], dm);
+			patches[count].length1 += strlen(buf);
+			patches[count].length2 += strlen(buf);
+		}
+
+		if(dm->op == '=' && strlen(dm->text) > 2 * PATCH_MARGIN) {
+			if(patches[count].diffs_length != 0) {
+				_patch_add_context(&patches[count], prepatch_text);
+				count++;
+				prepatch_text = strdup(postpatch_text);
+				char_count1 = char_count2;
+			}
+		}
+		if(dm->op != '=') {
+			char_count1 += strlen(dm->text);
+		}
+		if(dm->op != '-') {
+			char_count2 += strlen(dm->text);
+		}
+	}
+
+	if(patches[count].diffs_length != 0) {
+		_patch_add_context(&patches[count], prepatch_text);
+		count++;
+	}
+
+	printf("pool size: %d\n", diff->pool.pool_size);
+	printf("pool used: %d\n", diff->pool.pool_used);
+	printf("count: %d\n", count);
+
 }
 
 int dmp_options_init(dmp_options *opts)

@@ -238,6 +238,7 @@ extern int dmp_diff_foreach(
 extern uint32_t dmp_diff_hunks(const dmp_diff *diff);
 
 extern void dmp_diff_print_raw(FILE *fp, const dmp_diff *diff);
+extern void dmp_diff_print_patch(FILE *fp, const dmp_diff *diff);
 
 extern int dmp_patch_new(
 	dmp_patch     **patch,
