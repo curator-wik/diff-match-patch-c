@@ -10,6 +10,36 @@
  * https://github.com/arrbee/google-diff-match-patch-c/
  *
  * See included LICENSE file for license details.
+ *
+ *******************************************************************************************
+ * Copyright (c) Juan Gonzalez <supergusano2@gmail.com> under same license as Russell Belfer
+ * my own contributions nearly transliterated from google-diff-match-patch
+ * so that license is included below too
+ *******************************************************************************************
+ *
+ * Diff Match and Patch
+ *
+ * Copyright 2006 Google Inc.
+ * http://code.google.com/p/google-diff-match-patch/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *   Unless required by applicable law or agreed to in writing, software
+ *   distributed under the License is distributed on an "AS IS" BASIS,
+ *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *   See the License for the specific language governing permissions and
+ *   limitations under the License.
+ *   """
+ *
+ *   """Functions for diff, match and patch.
+ *
+ *   Computes the difference between two texts to create a patch.
+ *   Applies the patch onto another text, allowing for errors.
+ *
  */
 
 #include "dmp.h"
