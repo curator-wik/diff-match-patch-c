@@ -3,7 +3,7 @@ Port of google-diff-match-patch to C
 
 This is a C language port of Neil Fraser's google-diff-match-patch code.
 
-~~Right now, this is focused on the `diff` part of `diff-match-patch`~~ This can now also return a string of the diff text - woot!. It
+~~Right now, this is focused on the `diff` part of `diff-match-patch`~~ This can now also return a string of the diff text - woot! It
 contains APIs to compare two blocks on text and return a structure
 containing the list of differences (as shared, inserted, and deleted
 sections).
