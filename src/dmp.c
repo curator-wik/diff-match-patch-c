@@ -1061,8 +1061,8 @@ const char *dmp_diff_get_patch_str(const dmp_diff *diff)
 			free(patches[idx].diffs[jdx]);
 		}
 		free(patches[idx].diffs);
-		free(patches);
 	}
+	free(patches);
 
 	return final_text;
 }
