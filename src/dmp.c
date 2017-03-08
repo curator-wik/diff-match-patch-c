@@ -51,6 +51,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdarg.h>
+#include <stdbool.h>
 
 #define dmp_min(A,B)      (((A) < (B)) ? (A) : (B))
 #define dmp_max(A,B)      (((A) > (B)) ? (A) : (B))
@@ -644,7 +645,59 @@ static int _asnprintf(char **strp, size_t size, const char *fmt, ...)
 	return bytes_written;
 }
 
-// end is inclusinve
+#ifndef strlcat
+#define strlcat _strlcat
+/*	$NetBSD: strlcat.c,v 1.4 2005/05/16 06:55:48 lukem Exp $	*/
+/*	from	NetBSD: strlcat.c,v 1.16 2003/10/27 00:12:42 lukem Exp	*/
+/*	from OpenBSD: strlcat.c,v 1.10 2003/04/12 21:56:39 millert Exp	*/
+
+/*
+ * Copyright (c) 1998 Todd C. Miller <Todd.Miller@courtesan.com>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND TODD C. MILLER DISCLAIMS ALL
+ * WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL TODD C. MILLER BE LIABLE
+ * FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+ * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+ * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+
+static size_t
+_strlcat(char *dst, const char *src, size_t siz)
+{
+	char *d = dst;
+	const char *s = src;
+	size_t n = siz;
+	size_t dlen;
+
+	/* Find the end of dst and adjust bytes left but don't go past end */
+	while (n-- != 0 && *d != '\0')
+		d++;
+	dlen = d - dst;
+	n = siz - dlen;
+
+	if (n == 0)
+		return(dlen + strlen(s));
+	while (*s != '\0') {
+		if (n != 1) {
+			*d++ = *s;
+			n--;
+		}
+		s++;
+	}
+	*d = '\0';
+
+	return(dlen + (s - src));	/* count does not include NUL */
+}
+
+#endif
+
+// end is not inclusinve
 static char *_substring(char *text, int begin, int end)
 {
 	int idx, count = 0;
@@ -719,7 +772,8 @@ static void _append_diff(struct dmp_patch *patch, struct dmp_diff_minor *dm)
 		return;
 	}
 	patch->diffs_length++;
-	patch->diffs = realloc(patch->diffs, patch->diffs_length);
+	patch->diffs = realloc(patch->diffs,
+	    patch->diffs_length * sizeof(struct dmp_patch *));
 	patch->diffs[patch->diffs_length - 1] = dm;
 }
 
@@ -735,7 +789,8 @@ static void _prepend_diff(struct dmp_patch *patch, struct dmp_diff_minor *dm)
 		return;
 	}
 	patch->diffs_length++;
-	patch->diffs = realloc(patch->diffs, patch->diffs_length);
+	patch->diffs = realloc(patch->diffs,
+	    patch->diffs_length * sizeof(struct dmp_patch *));
 	int idx;
 	for(idx = patch->diffs_length - 1; idx > 0; idx--) {
 		patch->diffs[idx] = patch->diffs[idx - 1];
@@ -756,7 +811,7 @@ static void _patch_add_context(struct dmp_patch *patch, char *text)
 	padding = 0;
 
 	while(_string_match_count(pattern, text) != 1 &&
-	    strlen(pattern) < (2 * PATCH_MARGIN)) {
+	    strlen(pattern) < (MATCH_MAX_BITS - PATCH_MARGIN - PATCH_MARGIN)) {
 		padding += PATCH_MARGIN;
 		free(pattern);
 		pattern = _substring(text, dmp_max(0, patch->start2 - padding),
@@ -767,6 +822,7 @@ static void _patch_add_context(struct dmp_patch *patch, char *text)
 	padding += PATCH_MARGIN;
 
 	prefix = _substring(text, dmp_max(0, patch->start2 - padding), patch->start2);
+	// TODO: if this doesn't happen, it leaks
 	if(prefix[0]) {
 		//prepend prefix to diffs
 		struct dmp_diff_minor *dm = calloc(1,
@@ -776,7 +832,9 @@ static void _patch_add_context(struct dmp_patch *patch, char *text)
 		_prepend_diff(patch, dm);
 	}
 
-	suffix = _substring(text, patch->start2 - padding, patch->start2);
+	suffix = _substring(text, patch->start2 + patch->length1,
+	    patch->start2 + patch->length1 + padding);
+	// TODO: if this doesn't happen, it leaks
 	if(suffix[0]) {
 		// append suffix to diffs
 		struct dmp_diff_minor *dm = calloc(1,
@@ -801,20 +859,17 @@ static void _patch_add_context(struct dmp_patch *patch, char *text)
 static char *_create_patch_text(char op, int char_count2, char *patch_text,
     char *diff_text)
 {
-	int size = strlen(patch_text) + 1;
+	int size = strlen(patch_text);
 	char *final_patch_text = NULL;
 	char *temp1, *temp2;
-	temp1 = calloc(1, size);
-	temp2 = calloc(1, size);
 	if(op == '+') {
-		strncpy(temp1, patch_text, char_count2);
-		strncpy(temp2, patch_text + char_count2,
-		    size - 1 - char_count2);
+		temp1 = _substring(patch_text, 0, char_count2);
+		temp2 = _substring(patch_text, char_count2, strlen(patch_text));
 		asprintf(&final_patch_text, "%s%s%s", temp1, diff_text, temp2);
 	} else if(op == '-') {
-		strncpy(temp1, patch_text, char_count2);
-		strncpy(temp2, patch_text + char_count2 + strlen(diff_text),
-		    size - 1 - char_count2 - strlen(diff_text));
+		temp1 = _substring(patch_text, 0, char_count2);
+		temp2 = _substring(patch_text, char_count2 + strlen(diff_text),
+		    strlen(patch_text));
 		asprintf(&final_patch_text, "%s%s", temp1, temp2);
 	}
 
@@ -824,12 +879,39 @@ static char *_create_patch_text(char op, int char_count2, char *patch_text,
 	return final_patch_text;
 }
 
-void dmp_diff_print_patch(FILE *fp, const dmp_diff *diff)
+static char *_url_encode(char *text)
+{
+	const char *dont_encode = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'();/?:@&=+$,# ";
+	int idx, jdx, text_len, de_len;
+	bool can_encode = false;
+	text_len = strlen(text);
+	de_len = strlen(dont_encode);
+
+	char *ret_str = calloc(4, text_len);
+	for(idx = 0; idx < text_len; idx++) {
+		char buf[10] = {0};
+		can_encode = true;
+		for(jdx = 0; jdx < de_len; jdx++) {
+			if(text[idx] == dont_encode[jdx]) {
+				can_encode = false;
+			}
+		}
+		if(can_encode) {
+			snprintf(buf, sizeof(char) * 4, "%%%02X", text[idx]);
+		} else {
+			sprintf(buf, "%c", text[idx]);
+		}
+		strlcat(ret_str, buf, 4 * text_len);
+	}
+
+	return ret_str;
+
+}
+
+const char *dmp_diff_get_patch_str(const dmp_diff *diff)
 {
 	int pos;
 	const dmp_node *node;
-	char *buf = NULL;
-	//char op;
 	int count = 0;
 	int char_count1 = 0, char_count2 = 0;
 	int num_patches_allocated = 0;
@@ -850,45 +932,61 @@ void dmp_diff_print_patch(FILE *fp, const dmp_diff *diff)
 
 	count = 0;
 	for(pos = diff->list.start; pos >= 0; pos = node->next) {
+		bool appended_diff = true;
 		node = dmp_node_at(&diff->pool, pos);
 		struct dmp_diff_minor *dm = _get_diff_minor(node);
 		//printf("%c - %s\n", op, buf);
-		if(count == 0 && dm->op != '=') {
-			patches[count].start1 = patches[count].start2 = 0;
-		}
-		if(dm->op == '+') {
-			//patches[count].diffs[patches[count].diffs_length++] = dm;
-			_append_diff(&patches[count], dm);
-			patches[count].length2 += strlen(buf);
-			postpatch_text = _create_patch_text(dm->op, char_count2,
-			    postpatch_text, dm->text);
-		} else if(dm->op == '-') {
-			_append_diff(&patches[count], dm);
-			patches[count].length1 += strlen(buf);
-			postpatch_text = _create_patch_text(dm->op, char_count2,
-			    postpatch_text, dm->text);
-		} else if(dm->op == '=' && strlen(dm->text) <= 2 * PATCH_MARGIN &&
-		    num_patches_allocated > 0 &&
-		    patches[count].diffs_length != count + 1) {
-			_append_diff(&patches[count], dm);
-			patches[count].length1 += strlen(buf);
-			patches[count].length2 += strlen(buf);
+		if(patches[count].diffs_length == 0 && dm->op != '=') {
+			patches[count].start1 = char_count1;
+			patches[count].start2 = char_count2;
 		}
 
-		if(dm->op == '=' && strlen(dm->text) > 2 * PATCH_MARGIN) {
-			if(patches[count].diffs_length != 0) {
-				_patch_add_context(&patches[count], prepatch_text);
-				count++;
-				prepatch_text = strdup(postpatch_text);
-				char_count1 = char_count2;
+		switch(dm->op) {
+			case '+':
+			_append_diff(&patches[count], dm);
+			patches[count].length2 += strlen(dm->text);
+			postpatch_text = _create_patch_text(dm->op, char_count2,
+			    postpatch_text, dm->text);
+			break;
+			case '-':
+			patches[count].length1 += strlen(dm->text);
+			_append_diff(&patches[count], dm);
+			postpatch_text = _create_patch_text(dm->op, char_count2,
+			    postpatch_text, dm->text);
+			break;
+			case '=':
+			if(strlen(dm->text) <= 2 * PATCH_MARGIN &&
+			    patches[count].diffs_length != 0 &&
+			    num_patches_allocated != count + 1) {
+				_append_diff(&patches[count], dm);
+				patches[count].length1 += strlen(dm->text);
+				patches[count].length2 += strlen(dm->text);
+			} else {
+				appended_diff = false;
 			}
+
+			if(strlen(dm->text) >= 2 * PATCH_MARGIN) {
+				if(patches[count].diffs_length != 0) {
+					_patch_add_context(&patches[count], prepatch_text);
+					count++;
+					free(prepatch_text);
+					prepatch_text = strdup(postpatch_text);
+					char_count1 = char_count2;
+				}
+			}
+			break;
 		}
-		if(dm->op != '=') {
+		if(dm->op != '+') {
 			char_count1 += strlen(dm->text);
 		}
 		if(dm->op != '-') {
 			char_count2 += strlen(dm->text);
 		}
+		if(!appended_diff) {
+			free(dm->text);
+			free(dm);
+		}
+
 	}
 
 	if(patches[count].diffs_length != 0) {
@@ -896,10 +994,86 @@ void dmp_diff_print_patch(FILE *fp, const dmp_diff *diff)
 		count++;
 	}
 
-	printf("pool size: %d\n", diff->pool.pool_size);
-	printf("pool used: %d\n", diff->pool.pool_used);
-	printf("count: %d\n", count);
+	free(prepatch_text);
+	free(postpatch_text);
 
+	const char *final_text = NULL;
+	int idx, jdx;
+	for(idx = 0; idx < count; idx++) {
+		char *coords1, *coords2, *text;
+		char op_str[2] = {0};
+		if(patches[idx].length1 == 0) {
+			asprintf(&coords1, "%ld,0", patches[idx].start1);
+		} else if(patches[idx].length1 == 1) {
+			asprintf(&coords1, "%ld",  patches[idx].start1 + 1);
+		} else {
+			asprintf(&coords1, "%ld,%ld", patches[idx].start1,
+			    patches[idx].length1);
+		}
+		if(patches[idx].length2 == 0) {
+			asprintf(&coords2, "%ld,0", patches[idx].start2);
+		} else if(patches[idx].length2 == 1) {
+			asprintf(&coords2, "%ld", patches[idx].start2 + 1);
+		} else {
+			asprintf(&coords2, "%ld,%ld", patches[idx].start2,
+			    patches[idx].length2);
+		}
+		asprintf(&text, "@@ -%s +%s @@\n", coords1, coords2);
+		free(coords1);
+		free(coords2);
+		int text_size = strlen(text) + 2048;
+		text = realloc(text, text_size);
+		for(jdx = 0; jdx < patches[idx].diffs_length; jdx++) {
+			if(patches[idx].diffs[jdx]->op == '+') {
+				strlcat(text, "+", text_size);
+			} else if(patches[idx].diffs[jdx]->op == '-') {
+				strlcat(text, "-", text_size);
+			} else {
+				strlcat(text, " ", text_size);
+			}
+			if(text_size < (strlen(text) +
+			    strlen(patches[idx].diffs[jdx]->text))) {
+				text_size = strlen(text) +
+				    strlen(patches[idx].diffs[jdx]->text) * 2;
+				text = realloc(text, text_size);
+			}
+			int len = strlen(text);
+			char *proper_text = _url_encode(patches[idx].diffs[jdx]->text);
+			strlcat(proper_text, "\n", strlen(proper_text) * 2);
+			strlcat(text, proper_text, text_size);
+			free(proper_text);
+		}
+		if(!final_text) {
+			asprintf(&final_text, "%s\n", text);
+		} else {
+			char *temp_text;
+			asprintf(&temp_text, "%s%s\n", final_text, text);
+			free(final_text);
+			final_text = temp_text;
+		}
+		free(text);
+
+	}
+
+	for(idx = 0; idx < count; idx++) {
+		for (jdx = 0; jdx < patches[idx].diffs_length; jdx++) {
+			free(patches[idx].diffs[jdx]->text);
+			free(patches[idx].diffs[jdx]);
+		}
+		free(patches[idx].diffs);
+		free(patches);
+	}
+
+	return final_text;
+}
+
+void dmp_diff_print_patch(FILE *fp, const dmp_diff *diff)
+{
+	const char *s = dmp_diff_get_patch_str(diff);
+	if(s) {
+		fprintf(fp, "%s", s);
+		free(s);
+	}
 }
 
 int dmp_options_init(dmp_options *opts)
