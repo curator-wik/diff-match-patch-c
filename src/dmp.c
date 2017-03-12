@@ -773,7 +773,7 @@ static void _append_diff(struct dmp_patch *patch, struct dmp_diff_minor *dm)
 	}
 	patch->diffs_length++;
 	patch->diffs = realloc(patch->diffs,
-	    patch->diffs_length * sizeof(struct dmp_patch *));
+	    patch->diffs_length * sizeof(struct dmp_diff_minor *));
 	patch->diffs[patch->diffs_length - 1] = dm;
 }
 
@@ -790,7 +790,7 @@ static void _prepend_diff(struct dmp_patch *patch, struct dmp_diff_minor *dm)
 	}
 	patch->diffs_length++;
 	patch->diffs = realloc(patch->diffs,
-	    patch->diffs_length * sizeof(struct dmp_patch *));
+	    patch->diffs_length * sizeof(struct dmp_diff_minor *));
 	int idx;
 	for(idx = patch->diffs_length - 1; idx > 0; idx--) {
 		patch->diffs[idx] = patch->diffs[idx - 1];
@@ -859,7 +859,6 @@ static void _patch_add_context(struct dmp_patch *patch, char *text)
 static char *_create_patch_text(char op, int char_count2, char *patch_text,
     char *diff_text)
 {
-	int size = strlen(patch_text);
 	char *final_patch_text = NULL;
 	char *temp1, *temp2;
 	if(op == '+') {
@@ -1001,7 +1000,6 @@ const char *dmp_diff_get_patch_str(const dmp_diff *diff)
 	int idx, jdx;
 	for(idx = 0; idx < count; idx++) {
 		char *coords1, *coords2, *text;
-		char op_str[2] = {0};
 		if(patches[idx].length1 == 0) {
 			asprintf(&coords1, "%ld,0", patches[idx].start1);
 		} else if(patches[idx].length1 == 1) {
@@ -1037,7 +1035,6 @@ const char *dmp_diff_get_patch_str(const dmp_diff *diff)
 				    strlen(patches[idx].diffs[jdx]->text) * 2;
 				text = realloc(text, text_size);
 			}
-			int len = strlen(text);
 			char *proper_text = _url_encode(patches[idx].diffs[jdx]->text);
 			strlcat(proper_text, "\n", strlen(proper_text) * 2);
 			strlcat(text, proper_text, text_size);
