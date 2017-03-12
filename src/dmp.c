@@ -822,27 +822,20 @@ static void _patch_add_context(struct dmp_patch *patch, char *text)
 	padding += PATCH_MARGIN;
 
 	prefix = _substring(text, dmp_max(0, patch->start2 - padding), patch->start2);
-	// TODO: if this doesn't happen, it leaks
-	if(prefix[0]) {
-		//prepend prefix to diffs
-		struct dmp_diff_minor *dm = calloc(1,
-		    sizeof(struct dmp_diff_minor));
-		dm->op = '=';
-		dm->text = prefix;
-		_prepend_diff(patch, dm);
-	}
+	//prepend prefix to diffs
+	struct dmp_diff_minor *dm = calloc(1,
+	    sizeof(struct dmp_diff_minor));
+	dm->op = '=';
+	dm->text = prefix;
+	_prepend_diff(patch, dm);
 
 	suffix = _substring(text, patch->start2 + patch->length1,
 	    patch->start2 + patch->length1 + padding);
-	// TODO: if this doesn't happen, it leaks
-	if(suffix[0]) {
-		// append suffix to diffs
-		struct dmp_diff_minor *dm = calloc(1,
-		    sizeof(struct dmp_diff_minor));
-		dm->op = '=';
-		dm->text = suffix;
-		_append_diff(patch, dm);
-	}
+	// append suffix to diffs
+	dm = calloc(1, sizeof(struct dmp_diff_minor));
+	dm->op = '=';
+	dm->text = suffix;
+	_append_diff(patch, dm);
 
 	// roll back start points
 	patch->start1 -= strlen(prefix);
@@ -909,6 +902,9 @@ static char *_url_encode(char *text)
 
 const char *dmp_diff_get_patch_str(const dmp_diff *diff)
 {
+	if(!diff) {
+		return NULL;
+	}
 	int pos;
 	const dmp_node *node;
 	int count = 0;
@@ -927,6 +923,9 @@ const char *dmp_diff_get_patch_str(const dmp_diff *diff)
 		node = dmp_node_at(&diff->pool, pos);
 	}
 	num_patches_allocated = count;
+	if(count == 0) {
+		return NULL;
+	}
 	patches = calloc(count, sizeof(struct dmp_patch));
 
 	count = 0;
